@@ -22,11 +22,11 @@
 # --csv, -c
 # --slack, -s
 #----------------------------------------------------------
-# version: 1.0.3
-# date: 9.23.2019
+# version: 1.0.5
+# date: 05.19.2021
 #----------------------------------------------------------
 
-import sys, requests, os, time, csv, getopt, logging, yaml, json, base64
+import sys, requests, os, time, csv, getopt, logging, yaml, json, base64, getpass
 #from slackclient import SlackClient
 import logging.config
 import argparse
@@ -51,21 +51,32 @@ def setup_logging(default_path='./config/logging.yml',default_level=logging.INFO
 
 def config():
     with open('./config/config.yml', 'r') as config_settings:
-        config_info = yaml.load(config_settings)
+        config_info = yaml.load(config_settings, Loader=yaml.SafeLoader)
         accountInfoCSV = str(config_info['defaults']['accountMap']).rstrip()
         URL = str(config_info['defaults']['apiURL']).rstrip()
         if URL == '' or accountInfoCSV == '':
-            print "Config information in ./config.yml not configured correctly. Exiting..."
+            print("Config information in ./config.yml not configured correctly. Exiting...")
             sys.exit(1)
     return accountInfoCSV, URL
+
+def Password():
+    global Qualys_Password
+    try:
+        Qualys_Password = getpass.getpass(prompt='Qualys Password: ')
+    except Exception as error:
+        logger.error(f'Password Error: {error}')
+    return Qualys_Password
 
 
 def post_to_slack(scope):
     accountInfoCSV, URL = config()
     username = os.environ["QUALYS_API_USERNAME"]
-    password = base64.b64decode(os.environ["QUALYS_API_PASSWORD"])
+    password = Password()
+    #passBytes=bytes(password, "utf-8")
+    #passBytes=base64.b64decode(passBytes)
     usrPass = str(username)+':'+str(password)
-    b64Val = base64.b64encode(usrPass)
+    usrPassBytes=bytes(usrPass, "utf-8")
+    b64Val = base64.b64encode(usrPassBytes).decode("utf-8")
     headers = {
         'Accept': 'application/json',
         'content-type': 'application/json',
@@ -75,7 +86,7 @@ def post_to_slack(scope):
 
     with open(accountInfoCSV,mode='r') as csv_file:
         accountInfo = csv.DictReader(csv_file)
-            #print "{0}\n".format(json.dumps(row))
+            #print ("{0}\n".format(json.dumps(row)))
         if scope == "allAccounts":
             for row in accountInfo:
                 controlFailures = cloudviewReport(row['cloud'],row['accountId'], row['webHook'], URL, headers)
@@ -99,17 +110,18 @@ def cloudviewReport(cloud, accountID, webhook, URL, headers):
     if args.csv:
         out_file = "reports/" + str(accountID) + "_" "CloudView_Report_" + time.strftime("%Y%m%d-%H%M%S") + ".csv"
         ofile = open(out_file, "w")
-        fieldnames = ["Account","Control Name","Number of Failed Resources","Failed Resource List"]
+        fieldnames = ["Account","Control Name","Number of Failed Resources","Failed Resource List","Remediation Information Link"]
         writer = csv.DictWriter(ofile, fieldnames=fieldnames)
         writer.writeheader()
     pageNo = 0
     fullResults = False
-    rURL = URL + "/cloudview-api/rest/v1/" + str(cloud) + "/evaluations/" + str(accountID) + "?evaluatedOn:now-8h...now-1s&pageSize=100&pageNo={}".format(str(pageNo))
+    rURL = URL + "/cloudview-api/rest/v1/" + str(cloud) + "/evaluations/" + str(accountID) + "?filter=evaluatedOn%3A%5Bnow-8h..now-1s%5D&pageSize=300&pageNo={}".format(str(pageNo))
     rdata = requests.get(rURL, headers=headers)
     logger.info("GET list of control evaluations for Account ID %s - run status code %s", str(accountID), rdata.status_code)
     pagedControlList = []
     controlFailures = []
     controlText = {}
+    logger.debug("Requests Response Data: {}".format(rdata.text))
     controlList = json.loads(rdata.text)
     logger.debug("Length of control list content {}".format(len(controlList['content'])))
     while fullResults == False:
@@ -127,6 +139,7 @@ def cloudviewReport(cloud, accountID, webhook, URL, headers):
             controlList = json.loads(rdata.text)
 
     for control in pagedControlList:
+        remediationURL=str(URL) + "/cloudview/controls/cid-" + str(control['controlId']) + ".html"
         pageNo = 0
         controlText['text'] = ''
         rURL2 = URL + "/cloudview-api/rest/v1/" + str(cloud) + "/evaluations/" + str(accountID) + "/resources/" + str(control['controlId']) + "?evaluatedOn:now-8h...now-1s&pageNo={}&pageSize=50".format(str(pageNo))
@@ -151,9 +164,9 @@ def cloudviewReport(cloud, accountID, webhook, URL, headers):
                 logger.debug("Get Page {0} resource list per account per control request status code {1}".format(str(pageNo), rdata2.status_code))
                 logger.debug("Get Page {0} resource list per account per control request resource list \n{1}".format(str(pageNo), rdata2.text))
                 resourceList = json.loads(rdata2.text)
-        controlText['text'] = "Failed Control CID {0}, Control Name: {1}, Number of Failed Resources {2}\n Failed Resources: \n {3}".format(control['controlId'],control['controlName'], str(control['failedResources']), str(failedResources))
+        controlText['text'] = "Failed Control CID {0}, Control Name: {1}, Number of Failed Resources {2}\n Failed Resources: \n {3} \nRemediation Link: {4}".format(control['controlId'],control['controlName'], str(control['failedResources']), str(failedResources),str(remediationURL) )
         if args.csv:
-            writer.writerow({"Account": str(accountID), "Control Name": str(control['controlName']).replace("\n", "") ,"Number of Failed Resources": str(control['failedResources']), "Failed Resource List": str(failedResources).strip("[]")})
+            writer.writerow({"Account": str(accountID), "Control Name": str(control['controlName']).replace("\n", "") ,"Number of Failed Resources": str(control['failedResources']), "Failed Resource List": str(failedResources).strip("[]"), "Remediation Information Link":str(remediationURL)})
         logger.debug(controlText['text'])
 
         controlFailures.append(dict(controlText))

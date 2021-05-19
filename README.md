@@ -13,14 +13,16 @@ To run the script you will need:
 
 The Script is configured to read environmental variables for user name and password
 $QUALYS_API_USERNAME
-$QUALYS_API_PASSWORD
 
 > QUALYS_API_USERNAME stores the Qualys API User Name
 
-> QUALYS_API_PASSWORD stores the base64 encoded password for Qualys API
-to encode the password using base64 encoding execute the following command substituting the API Account Password for "APIpassword" - make sure the password is in '' or ""
+> QUALYS_API_PASSWORD = Enter password when prompted.
 
-export $QUALYS_API_PASSWORD=\`echo -n "APIpassword" | base64\`
+To store password as environment variable
+
+export $QUALYS_API_PASSWORD=APIpassword
+
+Edit Line 74 and change to password=os.environ["QUALYS_API_PASSWORD"]
 
 
 2. Qualys CloudView API endpoint URL for your Qualys Platform
